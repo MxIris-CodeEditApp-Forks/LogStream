@@ -6,7 +6,7 @@
 //
 
 /// Options for configuring the behavior of an activity stream.
-public struct ActivityStreamOptions: OptionSet {
+public struct ActivityStreamOptions: OptionSet, Sendable {
     public let rawValue: UInt32
 
     public init(rawValue: UInt32) {
@@ -26,4 +26,6 @@ public extension ActivityStreamOptions {
     static let info = ActivityStreamOptions(rawValue: 1 << 8)
     static let promiscuous = ActivityStreamOptions(rawValue: 1 << 9)
     static let preciseTimestamps = ActivityStreamOptions(rawValue: 1 << 9)
+
+    static let `default`: ActivityStreamOptions = [.historical, .processOnly]
 }

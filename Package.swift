@@ -17,15 +17,20 @@ let package = Package(
     targets: [
         .target(
             name: "LogStream",
-            dependencies: ["ExternalAppLoggerHeaders"]
+            dependencies: ["ExternalAppLoggerHeaders"],
+            swiftSettings: [
+                .enableExperimentalFeature("StrictConcurrency")
+            ]
         ),
         
         .target(
             name: "ExternalAppLoggerHeaders",
-            path: "Sources/Headers",
-            linkerSettings: [
-                .linkedFramework("LoggingSupport")
-            ]
+            path: "Sources/Headers"
+        ),
+
+        .testTarget(
+            name: "LogStreamTests",
+            dependencies: ["LogStream"]
         )
     ]
 )

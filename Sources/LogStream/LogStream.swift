@@ -6,6 +6,7 @@
 //
 
 import ExternalAppLoggerHeaders
+import Foundation
 
 public enum LogStream {
 
@@ -28,17 +29,19 @@ public enum LogStream {
     ///     }
     /// }
     /// ```
-    public static func logs(for processID: pid_t, flags: ActivityStreamOptions = [.historical, .processOnly]) -> AsyncStream<LogMessage> {
-        return AsyncStream { continuation in
+    public static func logs(for processID: pid_t, flags: ActivityStreamOptions = .default) -> AsyncStream<LogMessage> {
 
-            let stream = createStream(pid: processID, flags: flags, continuation: continuation)
+        let (stream, continuation) = AsyncStream.makeStream(of: LogMessage.self)
 
-            continuation.onTermination = { _ in
-                cancelLog(stream: stream)
-            }
+        let logstream = createStream(pid: processID, flags: flags, continuation: continuation)
 
-            resumeLog(stream: stream)
+        continuation.onTermination = { _ in
+            LoggingSupport.cancelLog(logstream)
         }
+
+        LoggingSupport.resumeLog(logstream)
+
+        return stream
     }
 
     /// Retrieve activity logs for a selection of processes using an asynchronous stream.
@@ -58,18 +61,20 @@ public enum LogStream {
     ///     }
     /// }
     /// ```
-    public static func logs(for processIDs: [pid_t], flags: ActivityStreamOptions = [.historical, .processOnly]) -> AsyncStream<LogMessage> {
-        AsyncStream { continuation in
-            let streams = processIDs.map {
-                createStream(pid: $0, flags: flags, continuation: continuation)
-            }
+    public static func logs(for processIDs: [pid_t], flags: ActivityStreamOptions = .default) -> AsyncStream<LogMessage> {
+        let (stream, continuation) = AsyncStream.makeStream(of: LogMessage.self)
 
-            continuation.onTermination = { _ in
-                streams.forEach(cancelLog)
-            }
-
-            streams.forEach(resumeLog)
+        let logstreams = processIDs.map {
+            createStream(pid: $0, flags: flags, continuation: continuation)
         }
+
+        continuation.onTermination = { _ in
+            logstreams.forEach(LoggingSupport.cancelLog)
+        }
+
+        logstreams.forEach(LoggingSupport.resumeLog)
+
+        return stream
     }
 
     /// Retrieve activity logs for all processes using an asynchronous stream.
@@ -87,48 +92,30 @@ public enum LogStream {
     ///     }
     /// }
     /// ```
-    public static func logs(flags: ActivityStreamOptions = [.historical, .processOnly]) -> AsyncStream<LogMessage> {
+    public static func logs(flags: ActivityStreamOptions = .default) -> AsyncStream<LogMessage> {
         LogStream.logs(for: -1, flags: flags)
     }
 
-    static func createStream(pid: pid_t, flags: ActivityStreamOptions, continuation: AsyncStream<LogMessage>.Continuation) -> ActivityStream? {
-        streamLog(pid: pid, flags: flags.rawValue) { entryPointer, error in
+    static let messageClass = unsafeBitCast(NSClassFromString("OSActivityLogMessageEvent"), to: _OSActivityLogMessageEvent.Type.self)
 
+    static func createStream(
+        pid: pid_t,
+        flags: ActivityStreamOptions,
+        continuation: AsyncStream<LogMessage>.Continuation
+    ) -> LoggingSupport.ActivityStream? {
+        LoggingSupport.streamLog(pid, flags.rawValue) { entryPointer, error in
             guard error == 0, let entryPointer else { return false }
 
             let entry = entryPointer.pointee
 
-            guard entry.type == OS_ACTIVITY_STREAM_TYPE_LOG_MESSAGE || entry.type == OS_ACTIVITY_STREAM_TYPE_LEGACY_LOG_MESSAGE else { return true }
+            guard
+                entry.type == OS_ACTIVITY_STREAM_TYPE_LOG_MESSAGE || entry.type == OS_ACTIVITY_STREAM_TYPE_LEGACY_LOG_MESSAGE
+            else { return true }
 
-            let event = OSActivityLogMessageEvent(entry: entryPointer)
+            let event = messageClass.init(entry: entryPointer)
 
-            let logMessage = LogMessage(
-                message: event.eventMessage,
-                date: event.timestamp,
-                subsystem: event.subsystem,
-                category: event.category,
-                type: .init(event.messageType),
-                process: event.process,
-                processID: event.processID
-            )
-
-            continuation.yield(logMessage)
+            continuation.yield(LogMessage(event))
             return true
         }
     }
 }
-
-typealias ActivityStream = os_activity_stream_t
-
-@_silgen_name("os_activity_stream_for_pid")
-fileprivate func streamLog(
-    pid: pid_t,
-    flags: ActivityStreamOptions.RawValue,
-    stream_block: (@convention(block) (os_activity_stream_entry_t?, Int32) -> Bool)?
-) -> ActivityStream?
-
-@_silgen_name("os_activity_stream_resume")
-fileprivate func resumeLog(stream: ActivityStream?)
-
-@_silgen_name("os_activity_stream_cancel")
-fileprivate func cancelLog(stream: ActivityStream?)
